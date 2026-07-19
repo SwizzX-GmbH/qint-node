@@ -81,10 +81,11 @@ export interface CreateIntentParams {
   /** Optional title shown on the hosted checkout. */
   title?: string;
   /**
-   * Optional idempotency key. Retrying a create with the same key returns the
-   * original intent (HTTP 200) instead of creating a duplicate.
+   * Idempotency key, unique per merchant (e.g. your order id). Required —
+   * the API rejects creates without one. Retrying a create with the same key
+   * returns the original intent (HTTP 200) instead of creating a duplicate.
    */
-  idempotencyKey?: string;
+  idempotencyKey: string;
   /**
    * Optional HTTPS return URL (max 500 chars). The checkout renders a
    * "Return to merchant" link and appends `?qint_intent={id}&status={status}`.

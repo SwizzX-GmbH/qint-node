@@ -61,7 +61,7 @@ RFC 7807 problem-details `detail` message.
 import { QintClient, QintApiError } from "@qint/node";
 
 try {
-  await qint.createIntent({ amount: 10, currency: "CHF" });
+  await qint.createIntent({ amount: 10, currency: "CHF", idempotencyKey: "order-10" });
 } catch (err) {
   if (err instanceof QintApiError) {
     console.error(err.status, err.detail); // e.g. 403 "This API key lacks the Write scope."
@@ -135,8 +135,8 @@ new QintClient(options: {
 qint.createIntent(params: {
   amount: number;
   currency: "CHF" | "EUR" | "USD";
+  idempotencyKey: string;  // required, unique per merchant (e.g. your order id)
   title?: string;
-  idempotencyKey?: string;
   returnUrl?: string;      // https, <= 500 chars
 }): Promise<Intent>;
 

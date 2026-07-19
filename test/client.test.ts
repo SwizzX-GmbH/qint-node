@@ -76,9 +76,24 @@ describe("QintClient.createIntent", () => {
     const { fetch, calls } = mockFetch({ status: 201, body: sampleIntent });
     const client = new QintClient({ apiKey: "qk_live_test", fetch });
 
-    await client.createIntent({ amount: 10, currency: "EUR" });
+    await client.createIntent({ amount: 10, currency: "EUR", idempotencyKey: "order-10" });
 
-    expect(JSON.parse(calls[0]!.body!)).toEqual({ amount: 10, currency: "EUR" });
+    expect(JSON.parse(calls[0]!.body!)).toEqual({
+      amount: 10,
+      currency: "EUR",
+      idempotencyKey: "order-10",
+    });
+  });
+
+  it("throws when idempotencyKey is missing", () => {
+    const { fetch, calls } = mockFetch({ status: 201, body: sampleIntent });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    expect(() =>
+      // @ts-expect-error intentionally missing idempotencyKey
+      client.createIntent({ amount: 10, currency: "EUR" }),
+    ).toThrow(/idempotencyKey/);
+    expect(calls).toHaveLength(0);
   });
 
   it("honors a custom baseUrl and strips its trailing slash", async () => {
@@ -89,7 +104,7 @@ describe("QintClient.createIntent", () => {
       fetch,
     });
 
-    await client.createIntent({ amount: 1, currency: "USD" });
+    await client.createIntent({ amount: 1, currency: "USD", idempotencyKey: "order-1" });
 
     expect(calls[0]!.url).toBe("https://api.qint.ch/api/v1/intents");
   });
@@ -149,14 +164,18 @@ describe("error handling", () => {
     });
     const client = new QintClient({ apiKey: "qk_live_test", fetch });
 
-    await expect(client.createIntent({ amount: 1, currency: "CHF" })).rejects.toMatchObject({
+    await expect(
+      client.createIntent({ amount: 1, currency: "CHF", idempotencyKey: "order-1" }),
+    ).rejects.toMatchObject({
       name: "QintApiError",
       status: 403,
       detail: "This API key lacks the Write scope.",
       title: "Forbidden",
     });
 
-    const err = await client.createIntent({ amount: 1, currency: "CHF" }).catch((e) => e);
+    const err = await client
+      .createIntent({ amount: 1, currency: "CHF", idempotencyKey: "order-1" })
+      .catch((e) => e);
     expect(err).toBeInstanceOf(QintApiError);
     expect(err.message).toBe("This API key lacks the Write scope.");
   });

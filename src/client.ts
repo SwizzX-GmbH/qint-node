@@ -54,7 +54,11 @@ export interface QintClientOptions {
  * @example
  * ```ts
  * const qint = new QintClient({ apiKey: process.env.QINT_API_KEY! });
- * const intent = await qint.createIntent({ amount: 49.9, currency: "CHF" });
+ * const intent = await qint.createIntent({
+ *   amount: 49.9,
+ *   currency: "CHF",
+ *   idempotencyKey: "order-1001",
+ * });
  * // redirect the buyer to intent.checkoutUrl
  * ```
  */
@@ -84,16 +88,20 @@ export class QintClient {
    * Create a payment intent. Send the buyer to the returned
    * {@link Intent.checkoutUrl}.
    *
-   * Passing the same `idempotencyKey` again returns the original intent
-   * instead of creating a duplicate.
+   * `idempotencyKey` is required and must be unique per merchant. Passing the
+   * same key again returns the original intent instead of creating a
+   * duplicate.
    */
   createIntent(params: CreateIntentParams): Promise<Intent> {
+    if (!params.idempotencyKey) {
+      throw new Error("createIntent requires an `idempotencyKey`.");
+    }
     const body: Record<string, unknown> = {
       amount: params.amount,
       currency: params.currency,
+      idempotencyKey: params.idempotencyKey,
     };
     if (params.title !== undefined) body.title = params.title;
-    if (params.idempotencyKey !== undefined) body.idempotencyKey = params.idempotencyKey;
     if (params.returnUrl !== undefined) body.returnUrl = params.returnUrl;
     return this.request<Intent>("POST", "/intents", { body });
   }
