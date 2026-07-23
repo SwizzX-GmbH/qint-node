@@ -8,7 +8,7 @@ import type {
 } from "./types.js";
 
 /** The default Qint public API base URL. `api.qint.ch` is coming. */
-export const DEFAULT_BASE_URL = "https://qint-api.fly.dev/api/v1";
+export const DEFAULT_BASE_URL = "https://api.qint.ch/api/v1";
 
 /**
  * Minimal `fetch` shape the client depends on. Node 18+ and modern browsers

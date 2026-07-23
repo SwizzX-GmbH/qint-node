@@ -49,7 +49,7 @@ console.log(page.total, page.items.length);
 ```
 
 The client sends `Authorization: Bearer <apiKey>`. The default base URL is
-`https://qint-api.fly.dev/api/v1` (`api.qint.ch` is coming); override it via the
+`https://api.qint.ch/api/v1` (`api.qint.ch` is coming); override it via the
 `baseUrl` option.
 
 ## Errors
@@ -127,7 +127,7 @@ leak the signature via timing.
 ```ts
 new QintClient(options: {
   apiKey: string;          // qk_live_...
-  baseUrl?: string;        // default https://qint-api.fly.dev/api/v1
+  baseUrl?: string;        // default https://api.qint.ch/api/v1
   timeout?: number;        // ms, default 30000
   fetch?: FetchLike;       // inject a custom fetch (tests, proxies)
 });
