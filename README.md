@@ -49,7 +49,7 @@ console.log(page.total, page.items.length);
 ```
 
 The client sends `Authorization: Bearer <apiKey>`. The default base URL is
-`https://api.qint.ch/api/v1` (`api.qint.ch` is coming); override it via the
+`https://api.qint.ch/api/v1` — the stable production hostname; override it via the
 `baseUrl` option.
 
 ## Errors

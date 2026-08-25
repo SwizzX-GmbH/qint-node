@@ -7,7 +7,7 @@ import type {
   ProblemDetails,
 } from "./types.js";
 
-/** The default Qint public API base URL. `api.qint.ch` is coming. */
+/** The default Qint public API base URL (the stable production hostname). */
 export const DEFAULT_BASE_URL = "https://api.qint.ch/api/v1";
 
 /**

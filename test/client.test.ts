@@ -100,13 +100,13 @@ describe("QintClient.createIntent", () => {
     const { fetch, calls } = mockFetch({ status: 201, body: sampleIntent });
     const client = new QintClient({
       apiKey: "qk_live_test",
-      baseUrl: "https://api.qint.ch/api/v1/",
+      baseUrl: "https://api.example.test/v1/",
       fetch,
     });
 
     await client.createIntent({ amount: 1, currency: "USD", idempotencyKey: "order-1" });
 
-    expect(calls[0]!.url).toBe("https://api.qint.ch/api/v1/intents");
+    expect(calls[0]!.url).toBe("https://api.example.test/v1/intents");
   });
 });
 
