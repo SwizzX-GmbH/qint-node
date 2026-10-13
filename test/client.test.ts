@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { QintClient, QintApiError, DEFAULT_BASE_URL, type FetchLike } from "../src/index.js";
+import { QintClient, QintApiError, DEFAULT_BASE_URL, CURRENCIES, type FetchLike } from "../src/index.js";
 import type { Intent } from "../src/index.js";
 
 /** A recorded request, for asserting request shaping. */
@@ -187,6 +187,131 @@ describe("error handling", () => {
     const err = await client.getIntent("pi_1").catch((e) => e);
     expect(err).toBeInstanceOf(QintApiError);
     expect(err.status).toBe(500);
+  });
+});
+
+describe("GBP", () => {
+  it("is a supported currency", async () => {
+    expect(CURRENCIES).toEqual(["CHF", "EUR", "USD", "GBP"]);
+    const { fetch, calls } = mockFetch({ status: 201, body: { ...sampleIntent, currency: "GBP" } });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const intent = await client.createIntent({ amount: 25, currency: "GBP", idempotencyKey: "order-gbp" });
+
+    expect(intent.currency).toBe("GBP");
+    expect(JSON.parse(calls[0]!.body!).currency).toBe("GBP");
+  });
+});
+
+describe("intent fee, underpayment and reversal fields", () => {
+  it("parses them when present", async () => {
+    const body = {
+      ...sampleIntent,
+      status: "settled",
+      amount: 100,
+      settledAt: "2026-07-07T10:20:00Z",
+      feeAmount: 0.98,
+      netAmount: 97.02,
+      settledAmount: null,
+      receivedAmount: 98,
+      underpaidBps: 200,
+      creditUsdt: 108.9,
+      creditRate: 0.8909,
+      reversedAt: "2026-07-08T09:00:00Z",
+    };
+    const { fetch } = mockFetch({ body });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const intent = await client.getIntent("pi_123");
+
+    expect(intent.feeAmount).toBe(0.98);
+    expect(intent.netAmount).toBe(97.02);
+    expect(intent.settledAmount).toBeNull();
+    expect(intent.receivedAmount).toBe(98);
+    expect(intent.underpaidBps).toBe(200);
+    expect(intent.creditUsdt).toBe(108.9);
+    expect(intent.creditRate).toBe(0.8909);
+    expect(intent.reversedAt).toBe("2026-07-08T09:00:00Z");
+  });
+
+  it("leaves them undefined when absent", async () => {
+    const { fetch } = mockFetch({ body: sampleIntent });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const intent = await client.getIntent("pi_123");
+
+    expect(intent.feeAmount).toBeUndefined();
+    expect(intent.netAmount).toBeUndefined();
+    expect(intent.receivedAmount).toBeUndefined();
+    expect(intent.underpaidBps).toBeUndefined();
+    expect(intent.creditUsdt).toBeUndefined();
+    expect(intent.creditRate).toBeUndefined();
+    expect(intent.reversedAt).toBeUndefined();
+    expect(intent.settledAmount).toBeUndefined();
+  });
+});
+
+describe("payment limit errors", () => {
+  it("exposes code and the limit numbers for amount_out_of_range", async () => {
+    const { fetch } = mockFetch({
+      status: 400,
+      contentType: "application/problem+json",
+      body: {
+        type: "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+        title: "Amount out of range",
+        status: 400,
+        detail:
+          "Payments must be between CHF 10 and CHF 100'000 (or the equivalent). This amount is CHF 5.00.",
+        code: "amount_out_of_range",
+        minChf: 10,
+        maxChf: 100000,
+        amountChf: 5,
+      },
+    });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const err = await client
+      .createIntent({ amount: 5, currency: "CHF", idempotencyKey: "order-5" })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(QintApiError);
+    expect(err.status).toBe(400);
+    expect(err.code).toBe("amount_out_of_range");
+    expect(err.problem?.minChf).toBe(10);
+    expect(err.problem?.maxChf).toBe(100000);
+    expect(err.problem?.amountChf).toBe(5);
+    expect(err.message).toBe(
+      "Payments must be between CHF 10 and CHF 100'000 (or the equivalent). This amount is CHF 5.00.",
+    );
+  });
+
+  it("exposes code for rate_unavailable", async () => {
+    const { fetch } = mockFetch({
+      status: 503,
+      body: {
+        title: "Exchange rate unavailable",
+        status: 503,
+        detail: "Exchange rate unavailable — try again in a minute.",
+        code: "rate_unavailable",
+      },
+    });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const err = await client
+      .createIntent({ amount: 50, currency: "GBP", idempotencyKey: "order-50" })
+      .catch((e) => e);
+
+    expect(err).toBeInstanceOf(QintApiError);
+    expect(err.status).toBe(503);
+    expect(err.code).toBe("rate_unavailable");
+  });
+
+  it("leaves code undefined when the problem has none", async () => {
+    const { fetch } = mockFetch({ status: 404, body: { title: "Not Found", status: 404 } });
+    const client = new QintClient({ apiKey: "qk_live_test", fetch });
+
+    const err = await client.getIntent("pi_missing").catch((e) => e);
+    expect(err.code).toBeUndefined();
   });
 });
 

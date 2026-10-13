@@ -54,8 +54,9 @@ The client sends `Authorization: Bearer <apiKey>`. The default base URL is
 
 ## Errors
 
-Any non-2xx response throws a `QintApiError` carrying the HTTP status and the
-RFC 7807 problem-details `detail` message.
+Any non-2xx response throws a `QintApiError` carrying the HTTP status, the
+RFC 7807 problem-details `detail` message and, when the API sends one, a
+machine-readable `code`. The full parsed body is on `err.problem`.
 
 ```ts
 import { QintClient, QintApiError } from "@qint/node";
@@ -73,6 +74,33 @@ try {
 
 Creating an intent needs a **Write**-scoped key; reading and listing need
 **Read**. A key missing the scope gets a `403` with an explanatory `detail`.
+
+### Payment limits
+
+Each payment must be between CHF 10 and CHF 100'000 (or the equivalent in EUR,
+USD or GBP). Outside that range `createIntent` throws a `400` with
+`err.code === "amount_out_of_range"` and the numbers on `err.problem`
+(`minChf`, `maxChf`, `amountChf`). If no exchange rate is available to judge a
+non-CHF amount, it throws a `503` with `err.code === "rate_unavailable"` — retry
+in a minute.
+
+```ts
+if (err instanceof QintApiError && err.code === "amount_out_of_range") {
+  console.error(err.detail, err.problem?.minChf, err.problem?.maxChf, err.problem?.amountChf);
+}
+```
+
+## Underpaid payments
+
+A payment that comes up short but within your accepted underpayment still
+settles. The `payment.status` webhook then carries `underpaid: true`,
+`receivedAmount` (the fiat amount actually paid, in the intent's currency) and
+`underpaidBps` (how short, in basis points of the invoice); both are `null`
+otherwise. The `Intent` model declares the same fields plus `feeAmount`,
+`netAmount`, `settledAmount`, `creditUsdt`, `creditRate` and `reversedAt` — all
+optional, so check for `undefined`/`null` before using them. A non-null
+`reversedAt` means the payment was reversed after settlement: treat it as not
+paid even though its status stays `settled`.
 
 ## Webhooks
 
@@ -134,7 +162,7 @@ new QintClient(options: {
 
 qint.createIntent(params: {
   amount: number;
-  currency: "CHF" | "EUR" | "USD";
+  currency: "CHF" | "EUR" | "USD" | "GBP";
   idempotencyKey: string;  // required, unique per merchant (e.g. your order id)
   title?: string;
   returnUrl?: string;      // https, <= 500 chars

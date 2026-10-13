@@ -79,6 +79,43 @@ describe("parseEvent", () => {
     expect(event.underpaid).toBe(false);
   });
 
+  it("parses the accepted-underpayment and reversal fields", () => {
+    const body = JSON.stringify({
+      type: "payment.status",
+      intentId: "pi_456",
+      status: "settled",
+      amount: 100,
+      currency: "GBP",
+      assetSymbol: "USDT",
+      underpaid: true,
+      receivedAmount: 98,
+      underpaidBps: 200,
+      expectedCryptoAmount: "126.58227848",
+      receivedCryptoAmount: "124.05063291",
+      invoiceId: null,
+      paymentLinkId: null,
+      reversed: false,
+      reversedAt: null,
+      occurredAt: "2026-07-07T10:05:00Z",
+    });
+    const event = parseEvent(body);
+    expect(event.currency).toBe("GBP");
+    expect(event.underpaid).toBe(true);
+    expect(event.receivedAmount).toBe(98);
+    expect(event.underpaidBps).toBe(200);
+    expect(event.expectedCryptoAmount).toBe("126.58227848");
+    expect(event.receivedCryptoAmount).toBe("124.05063291");
+    expect(event.reversed).toBe(false);
+    expect(event.reversedAt).toBeNull();
+  });
+
+  it("tolerates events without the underpayment fields", () => {
+    const event = parseEvent(eventBody);
+    expect(event.receivedAmount).toBeUndefined();
+    expect(event.underpaidBps).toBeUndefined();
+    expect(event.reversedAt).toBeUndefined();
+  });
+
   it("parses a Buffer body", () => {
     const event = parseEvent(Buffer.from(eventBody, "utf8"));
     expect(event.intentId).toBe("pi_123");

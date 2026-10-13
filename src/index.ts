@@ -16,7 +16,9 @@ export {
 } from "./webhooks.js";
 export {
   INTENT_STATUSES,
+  CURRENCIES,
   type Currency,
+  type QintErrorCode,
   type IntentStatus,
   type Intent,
   type CreateIntentParams,

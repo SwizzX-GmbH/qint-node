@@ -6,8 +6,11 @@
  * https://docs.qint.ch for the authoritative reference.
  */
 
-/** Fiat currency accepted when creating an intent. */
-export type Currency = "CHF" | "EUR" | "USD";
+/** Fiat currency accepted when creating an intent: CHF, EUR, USD or GBP. */
+export type Currency = "CHF" | "EUR" | "USD" | "GBP";
+
+/** All valid {@link Currency} values, handy for validation or UI. */
+export const CURRENCIES: readonly Currency[] = ["CHF", "EUR", "USD", "GBP"] as const;
 
 /**
  * Lifecycle status of a payment intent, lowercase on the wire.
@@ -70,6 +73,29 @@ export interface Intent {
   confirmedAt?: string | null;
   /** When funds were settled to the merchant (ISO-8601), if they have been. */
   settledAt?: string | null;
+  /**
+   * When the execution partner reversed the payment after settlement
+   * (ISO-8601). The status stays `settled`; treat a reversed payment as not
+   * paid. Null/absent otherwise.
+   */
+  reversedAt?: string | null;
+  /** Qint's fee on this payment, in {@link Intent.currency}. Optional. */
+  feeAmount?: number;
+  /** What the merchant is credited once the payment settles, in {@link Intent.currency}. Optional. */
+  netAmount?: number;
+  /** The amount the execution partner booked as realised (null until booked). */
+  settledAmount?: number | null;
+  /**
+   * The fiat amount actually paid when the payment settled short within the
+   * merchant's accepted underpayment (in {@link Intent.currency}); null otherwise.
+   */
+  receivedAmount?: number | null;
+  /** How short the payment was, in basis points of the invoice; null unless underpaid. */
+  underpaidBps?: number | null;
+  /** USDT credited to the merchant balance for this payment (null until credited). */
+  creditUsdt?: number | null;
+  /** The rate the credit was booked at, fiat per 1 USDT (null until credited). */
+  creditRate?: number | null;
 }
 
 /** Parameters for {@link QintClient.createIntent}. */
@@ -144,17 +170,45 @@ export interface PaymentStatusEvent {
   occurredAt: string;
   /** True when the buyer paid less than the expected crypto amount. */
   underpaid?: boolean;
-  /** Expected crypto amount (decimal), present on underpayment events. */
-  expectedCryptoAmount?: number | null;
-  /** Crypto amount actually received (decimal), present on underpayment events. */
-  receivedCryptoAmount?: number | null;
+  /**
+   * The fiat amount actually paid (in {@link PaymentStatusEvent.currency}) when
+   * the payment settled short within the merchant's accepted underpayment;
+   * null otherwise.
+   */
+  receivedAmount?: number | null;
+  /** How short the payment was, in basis points of the invoice; null unless underpaid. */
+  underpaidBps?: number | null;
+  /** Expected crypto amount, an 8-decimal-place string (e.g. `"0.00100000"`). */
+  expectedCryptoAmount?: string | null;
+  /** Crypto amount actually received, an 8-decimal-place string. */
+  receivedCryptoAmount?: string | null;
+  /** True when the payment was reversed after settlement (status stays `settled`). */
+  reversed?: boolean;
+  /** When the payment was reversed (ISO-8601), if it was. */
+  reversedAt?: string | null;
 }
 
-/** RFC 7807 problem details, as returned by the API on non-2xx responses. */
+/** Machine-readable error codes the API puts in a problem's top-level `code`. */
+export type QintErrorCode = "amount_out_of_range" | "rate_unavailable" | (string & {});
+
+/**
+ * RFC 7807 problem details, as returned by the API on non-2xx responses.
+ *
+ * Extensions are serialised FLAT at the top level of the body, so `code`,
+ * `minChf`, `maxChf` and `amountChf` sit beside `title` and `detail`.
+ */
 export interface ProblemDetails {
   type?: string;
   title?: string;
   status?: number;
   detail?: string;
+  /** Machine-readable error code, e.g. `amount_out_of_range` or `rate_unavailable`. */
+  code?: QintErrorCode;
+  /** `amount_out_of_range`: the smallest allowed payment, in CHF. */
+  minChf?: number;
+  /** `amount_out_of_range`: the largest allowed payment, in CHF. */
+  maxChf?: number;
+  /** `amount_out_of_range`: the requested amount converted to CHF. */
+  amountChf?: number | null;
   [key: string]: unknown;
 }
