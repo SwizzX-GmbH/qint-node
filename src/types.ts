@@ -13,6 +13,36 @@ export type Currency = "CHF" | "EUR" | "USD" | "GBP";
 export const CURRENCIES: readonly Currency[] = ["CHF", "EUR", "USD", "GBP"] as const;
 
 /**
+ * The stablecoin a merchant's balance is held in and payments are credited in.
+ * Merchants registered in the European Union settle in `USDC` (USDT is not
+ * authorised under MiCA); all other merchants settle in `USDT`.
+ *
+ * Typed as the known values, but treat any other string as possible at
+ * runtime — the SDK passes unknown values through unchanged.
+ */
+export type SettlementAsset = "USDT" | "USDC";
+
+/** All known {@link SettlementAsset} values. */
+export const SETTLEMENT_ASSETS: readonly SettlementAsset[] = ["USDT", "USDC"] as const;
+
+/**
+ * Availability of one fiat currency for new payments, as returned by
+ * {@link QintClient.listCurrencies}. `code` is a plain string so a currency
+ * added later still parses.
+ */
+export interface CurrencyAvailability {
+  /** ISO 4217 currency code, e.g. `CHF`. */
+  code: string;
+  /** Whether the currency is offered for new payments right now. */
+  enabled: boolean;
+}
+
+/** Response of `GET /api/v1/public/currencies`, in display order. */
+export interface CurrencyList {
+  currencies: CurrencyAvailability[];
+}
+
+/**
  * Lifecycle status of a payment intent, lowercase on the wire.
  *
  * `initiated` → `pending` → `confirmed` → `settled` is the happy path;
@@ -79,10 +109,14 @@ export interface Intent {
    * paid. Null/absent otherwise.
    */
   reversedAt?: string | null;
-  /** Qint's fee on this payment, in {@link Intent.currency}. Optional. */
-  feeAmount?: number;
-  /** What the merchant is credited once the payment settles, in {@link Intent.currency}. Optional. */
-  netAmount?: number;
+  /** True once the payment was reversed after settlement (mirrors a non-null `reversedAt`). */
+  reversed?: boolean;
+  /** True when the buyer paid less than the quoted crypto amount. A flag, not a status. */
+  underpaid?: boolean;
+  /** Qint's fee on this payment, in {@link Intent.currency}. Null until the payment settles. */
+  feeAmount?: number | null;
+  /** What the merchant is credited for this payment, in {@link Intent.currency}. Null until the payment settles. */
+  netAmount?: number | null;
   /** The amount the execution partner booked as realised (null until booked). */
   settledAmount?: number | null;
   /**
@@ -92,10 +126,20 @@ export interface Intent {
   receivedAmount?: number | null;
   /** How short the payment was, in basis points of the invoice; null unless underpaid. */
   underpaidBps?: number | null;
-  /** USDT credited to the merchant balance for this payment (null until credited). */
+  /**
+   * The amount credited to the merchant balance for this payment, in
+   * {@link Intent.creditAsset} (6 decimal places). The name predates USDC: for
+   * a merchant settling in USDC this is USDC. Null until credited.
+   */
   creditUsdt?: number | null;
-  /** The rate the credit was booked at, fiat per 1 USDT (null until credited). */
+  /** Fiat units of {@link Intent.currency} per 1 unit of {@link Intent.creditAsset} used for the credit. Null until credited. */
   creditRate?: number | null;
+  /**
+   * The stablecoin the credit was booked in — the merchant's settlement asset
+   * at the moment of crediting (`USDC` for EU-registered merchants, `USDT`
+   * otherwise). Null until credited.
+   */
+  creditAsset?: SettlementAsset | null;
 }
 
 /** Parameters for {@link QintClient.createIntent}. */
@@ -188,8 +232,51 @@ export interface PaymentStatusEvent {
   reversedAt?: string | null;
 }
 
-/** Machine-readable error codes the API puts in a problem's top-level `code`. */
-export type QintErrorCode = "amount_out_of_range" | "rate_unavailable" | (string & {});
+/**
+ * The `ping` test event, sent when "Send test event" is pressed in the
+ * dashboard. Verify it like any event, return 2xx and ignore it.
+ */
+export interface PingEvent {
+  type: "ping";
+  /** The webhook endpoint the test was sent to. */
+  endpointId: string;
+  /** When the test event was sent (ISO-8601). */
+  sentAt: string;
+}
+
+/**
+ * An event type this SDK version does not know yet. Handlers must ignore
+ * unrecognised types (still returning 2xx) so new event types never break them.
+ */
+export interface UnknownEvent {
+  type: string;
+  [key: string]: unknown;
+}
+
+/** Any webhook payload: a known event or one added after this SDK version. */
+export type QintEvent = PaymentStatusEvent | PingEvent | UnknownEvent;
+
+/**
+ * Machine-readable error codes the API puts in a problem's top-level `code`.
+ *
+ * The merchant API returns `amount_out_of_range` (400) and `rate_unavailable`
+ * (503). `settlement_asset_mismatch` (400) is returned by the dashboard API's
+ * payout endpoints when a crypto payout asset is not the merchant's settlement
+ * asset — listed for completeness. Other codes may appear; treat unknown ones
+ * like a code-less error of the same status.
+ */
+export type QintErrorCode =
+  | "amount_out_of_range"
+  | "rate_unavailable"
+  | "settlement_asset_mismatch"
+  | (string & {});
+
+/** The known {@link QintErrorCode} values. */
+export const ERROR_CODES = {
+  amountOutOfRange: "amount_out_of_range",
+  rateUnavailable: "rate_unavailable",
+  settlementAssetMismatch: "settlement_asset_mismatch",
+} as const;
 
 /**
  * RFC 7807 problem details, as returned by the API on non-2xx responses.
@@ -202,6 +289,8 @@ export interface ProblemDetails {
   title?: string;
   status?: number;
   detail?: string;
+  /** Request correlation id — include it in support requests. */
+  traceId?: string;
   /** Machine-readable error code, e.g. `amount_out_of_range` or `rate_unavailable`. */
   code?: QintErrorCode;
   /** `amount_out_of_range`: the smallest allowed payment, in CHF. */

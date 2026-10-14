@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 import {
   verifyWebhookSignature,
   parseEvent,
+  isPaymentStatusEvent,
+  isPingEvent,
   SIGNATURE_HEADER,
   EVENT_ID_HEADER,
   type PaymentStatusEvent,
@@ -98,7 +100,7 @@ describe("parseEvent", () => {
       reversedAt: null,
       occurredAt: "2026-07-07T10:05:00Z",
     });
-    const event = parseEvent(body);
+    const event = parseEvent<PaymentStatusEvent>(body);
     expect(event.currency).toBe("GBP");
     expect(event.underpaid).toBe(true);
     expect(event.receivedAmount).toBe(98);
@@ -110,7 +112,7 @@ describe("parseEvent", () => {
   });
 
   it("tolerates events without the underpayment fields", () => {
-    const event = parseEvent(eventBody);
+    const event = parseEvent<PaymentStatusEvent>(eventBody);
     expect(event.receivedAmount).toBeUndefined();
     expect(event.underpaidBps).toBeUndefined();
     expect(event.reversedAt).toBeUndefined();
@@ -118,7 +120,28 @@ describe("parseEvent", () => {
 
   it("parses a Buffer body", () => {
     const event = parseEvent(Buffer.from(eventBody, "utf8"));
-    expect(event.intentId).toBe("pi_123");
+    expect(isPaymentStatusEvent(event)).toBe(true);
+    if (isPaymentStatusEvent(event)) expect(event.intentId).toBe("pi_123");
+  });
+
+  it("parses the ping test event", () => {
+    const event = parseEvent(
+      JSON.stringify({ type: "ping", endpointId: "6f1c0b8e-0000-4000-8000-000000000001", sentAt: "2026-10-14T10:00:00Z" }),
+    );
+    expect(isPingEvent(event)).toBe(true);
+    expect(isPaymentStatusEvent(event)).toBe(false);
+    if (isPingEvent(event)) {
+      expect(event.endpointId).toBe("6f1c0b8e-0000-4000-8000-000000000001");
+      expect(event.sentAt).toBe("2026-10-14T10:00:00Z");
+    }
+  });
+
+  it("tolerates unknown event types and unknown fields", () => {
+    const event = parseEvent(JSON.stringify({ type: "payout.paid", payoutId: "po_1", brandNew: { x: 1 } }));
+    expect(event.type).toBe("payout.paid");
+    expect(isPaymentStatusEvent(event)).toBe(false);
+    expect(isPingEvent(event)).toBe(false);
+    expect((event as Record<string, unknown>).payoutId).toBe("po_1");
   });
 });
 

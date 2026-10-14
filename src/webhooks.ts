@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { PaymentStatusEvent } from "./types.js";
+import type { PaymentStatusEvent, PingEvent, QintEvent } from "./types.js";
 
 /** Header carrying the HMAC signature: `X-Qint-Signature: sha256=<hex>`. */
 export const SIGNATURE_HEADER = "X-Qint-Signature";
@@ -44,13 +44,28 @@ export function verifyWebhookSignature(
 }
 
 /**
- * Parse a raw webhook body into a typed {@link PaymentStatusEvent}.
+ * Parse a raw webhook body into a typed {@link QintEvent}: a
+ * `payment.status` event, a `ping` test event, or — for an event type added
+ * after this SDK version — an {@link UnknownEvent} you should acknowledge (2xx)
+ * and ignore. Narrow with {@link isPaymentStatusEvent} / {@link isPingEvent}
+ * (or pass the expected type, `parseEvent<PaymentStatusEvent>(raw)`, when you
+ * have already checked `type`).
  *
  * Verify the signature with {@link verifyWebhookSignature} BEFORE trusting the
  * parsed event, and dedupe on the `X-Qint-Event-Id` header so a retried
  * delivery is processed at most once.
  */
-export function parseEvent(rawBody: string | Buffer): PaymentStatusEvent {
+export function parseEvent<T extends QintEvent = QintEvent>(rawBody: string | Buffer): T {
   const text = typeof rawBody === "string" ? rawBody : rawBody.toString("utf8");
-  return JSON.parse(text) as PaymentStatusEvent;
+  return JSON.parse(text) as T;
+}
+
+/** True when the event is a `payment.status` event. */
+export function isPaymentStatusEvent(event: QintEvent | null | undefined): event is PaymentStatusEvent {
+  return !!event && event.type === "payment.status";
+}
+
+/** True when the event is the dashboard's `ping` test event. */
+export function isPingEvent(event: QintEvent | null | undefined): event is PingEvent {
+  return !!event && event.type === "ping";
 }

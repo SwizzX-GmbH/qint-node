@@ -1,6 +1,7 @@
 import { QintApiError } from "./errors.js";
 import type {
   CreateIntentParams,
+  CurrencyList,
   Intent,
   IntentList,
   ListIntentsParams,
@@ -121,20 +122,41 @@ export class QintClient {
     return this.request<IntentList>("GET", "/intents", { query });
   }
 
+  /**
+   * List every fiat currency Qint knows, in display order, with whether it is
+   * offered for **new** payments right now (`GET /public/currencies`).
+   *
+   * Qint can switch a currency off (and back on) at any time; while it is off,
+   * {@link QintClient.createIntent} in that currency fails with a `400`. Use
+   * this to hide disabled currencies in your checkout. The endpoint is public
+   * (no API key is sent) and cacheable for 30 seconds — cache it on your side
+   * rather than calling it on every checkout.
+   */
+  listCurrencies(): Promise<CurrencyList> {
+    return this.request<CurrencyList>("GET", "/public/currencies", { auth: false });
+  }
+
+  /**
+   * Convenience over {@link QintClient.listCurrencies}: the codes currently
+   * enabled for new payments, in display order (e.g. `["CHF", "EUR"]`).
+   */
+  async enabledCurrencies(): Promise<string[]> {
+    const list = await this.listCurrencies();
+    return (list?.currencies ?? []).filter((c) => c.enabled).map((c) => c.code);
+  }
+
   private async request<T>(
     method: string,
     path: string,
-    opts: { body?: unknown; query?: Record<string, string> } = {},
+    opts: { body?: unknown; query?: Record<string, string>; auth?: boolean } = {},
   ): Promise<T> {
     let url = `${this.baseUrl}${path}`;
     if (opts.query && Object.keys(opts.query).length > 0) {
       url += `?${new URLSearchParams(opts.query).toString()}`;
     }
 
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
-      Accept: "application/json",
-    };
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (opts.auth !== false) headers.Authorization = `Bearer ${this.apiKey}`;
     let payload: string | undefined;
     if (opts.body !== undefined) {
       headers["Content-Type"] = "application/json";
