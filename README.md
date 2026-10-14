@@ -48,9 +48,25 @@ const page = await qint.listIntents({ status: "settled", page: 1, pageSize: 20 }
 console.log(page.total, page.items.length);
 ```
 
-The client sends `Authorization: Bearer <apiKey>`. The default base URL is
+The client sends `Authorization: Bearer <apiKey>` (except on the public
+currency list, which needs no key). The default base URL is
 `https://api.qint.ch/api/v1` — the stable production hostname; override it via the
 `baseUrl` option.
+
+## Currencies
+
+Intents can be created in CHF, EUR, USD or GBP — but only while Qint offers the
+currency. Qint can switch a currency off (and back on) at any time; creating an
+intent in a switched-off currency fails with a `400`. Ask the public currency
+list which ones are enabled and hide the rest in your checkout. It is cacheable
+for 30 seconds — cache it on your side rather than calling it per checkout.
+
+```ts
+const { currencies } = await qint.listCurrencies();
+// [{ code: "CHF", enabled: true }, { code: "EUR", enabled: true }, ..., { code: "GBP", enabled: false }]
+
+const enabled = await qint.enabledCurrencies(); // ["CHF", "EUR", "USD"]
+```
 
 ## Errors
 
@@ -72,17 +88,30 @@ try {
 }
 ```
 
+`err.traceId` carries the request correlation id — include it in support
+requests.
+
+A currency Qint has switched off is refused with a `400` that has **no** `code`;
+the `detail` names the currencies you can use, e.g. `"GBP is currently disabled
+on Qint. currency must be one of: CHF, EUR, USD."`.
+
 Creating an intent needs a **Write**-scoped key; reading and listing need
 **Read**. A key missing the scope gets a `403` with an explanatory `detail`.
 
 ### Payment limits
 
 Each payment must be between CHF 10 and CHF 100'000 (or the equivalent in EUR,
-USD or GBP). Outside that range `createIntent` throws a `400` with
+USD or GBP; a merchant may have an agreed higher cap). Outside that range `createIntent` throws a `400` with
 `err.code === "amount_out_of_range"` and the numbers on `err.problem`
 (`minChf`, `maxChf`, `amountChf`). If no exchange rate is available to judge a
 non-CHF amount, it throws a `503` with `err.code === "rate_unavailable"` — retry
 in a minute.
+
+Known codes are available as `ERROR_CODES` (`amountOutOfRange`,
+`rateUnavailable`, and `settlementAssetMismatch` — the last is returned by the
+dashboard's payout endpoints, not by the merchant API, and is listed for
+completeness). Other codes may be added; treat an unknown one like a code-less
+error of the same status.
 
 ```ts
 if (err instanceof QintApiError && err.code === "amount_out_of_range") {
@@ -96,15 +125,27 @@ A payment that comes up short but within your accepted underpayment still
 settles. The `payment.status` webhook then carries `underpaid: true`,
 `receivedAmount` (the fiat amount actually paid, in the intent's currency) and
 `underpaidBps` (how short, in basis points of the invoice); both are `null`
-otherwise. The `Intent` model declares the same fields plus `feeAmount`,
-`netAmount`, `settledAmount`, `creditUsdt`, `creditRate` and `reversedAt` — all
-optional, so check for `undefined`/`null` before using them. A non-null
-`reversedAt` means the payment was reversed after settlement: treat it as not
-paid even though its status stays `settled`.
+otherwise. The `Intent` model declares the same fields plus `underpaid`,
+`feeAmount` and `netAmount` (null until settled), `settledAmount`,
+`creditUsdt`, `creditRate`, `creditAsset`, `reversed` and `reversedAt` — all
+optional, so check for `undefined`/`null` before using them. `reversed: true`
+(a non-null `reversedAt`) means the payment was reversed after settlement:
+treat it as not paid even though its status stays `settled`.
+
+## Settlement asset
+
+Your Qint balance is held in a stablecoin: **USDC** for merchants registered in
+the European Union (USDT is not authorised under MiCA), **USDT** for everyone
+else. Once a payment is credited, `intent.creditAsset` says which one —
+`creditUsdt` is the credited amount *in that asset* (the field name predates
+USDC) and `creditRate` is fiat units of `currency` per 1 unit of it. The
+`SettlementAsset` type covers `"USDT" | "USDC"`; treat any other value as
+possible.
 
 ## Webhooks
 
-Configure an endpoint in the Qint dashboard to receive `payment.status` events.
+Configure an endpoint in the Qint dashboard to receive `payment.status` events
+(plus the `ping` test event).
 Each delivery is signed. **Always verify the signature against the raw request
 body** before trusting the payload, and dedupe on the `X-Qint-Event-Id` header
 so a retried delivery is handled at most once. Acknowledge with a `2xx` quickly
@@ -119,7 +160,13 @@ Header reference:
 
 ```ts
 import express from "express";
-import { verifyWebhookSignature, parseEvent, SIGNATURE_HEADER, EVENT_ID_HEADER } from "@qint/node";
+import {
+  verifyWebhookSignature,
+  parseEvent,
+  isPaymentStatusEvent,
+  SIGNATURE_HEADER,
+  EVENT_ID_HEADER,
+} from "@qint/node";
 
 const app = express();
 const seen = new Set<string>(); // use a durable store in production
@@ -139,9 +186,11 @@ app.post("/webhooks/qint", express.raw({ type: "application/json" }), (req, res)
   seen.add(eventId);
 
   const event = parseEvent(raw);
-  if (event.type === "payment.status" && event.status === "settled") {
+  if (isPaymentStatusEvent(event) && event.status === "settled" && !event.reversed) {
     // fulfil the order for event.intentId
   }
+  // `ping` (the dashboard's "Send test event") and any event type this SDK
+  // does not know yet: acknowledge and ignore.
 
   res.sendStatus(200); // ack fast
 });
@@ -175,13 +224,18 @@ qint.listIntents(params?: {
   page?: number;           // default 1
   pageSize?: number;       // 1..100, default 20
 }): Promise<{ items: Intent[]; total: number; page: number; pageSize: number }>;
+
+qint.listCurrencies(): Promise<{ currencies: { code: string; enabled: boolean }[] }>;
+qint.enabledCurrencies(): Promise<string[]>;
 ```
 
 Webhook helpers:
 
 ```ts
 verifyWebhookSignature(rawBody: string | Buffer, signatureHeader: string | null | undefined, secret: string): boolean;
-parseEvent(rawBody: string | Buffer): PaymentStatusEvent;
+parseEvent(rawBody: string | Buffer): QintEvent; // PaymentStatusEvent | PingEvent | UnknownEvent
+isPaymentStatusEvent(event): event is PaymentStatusEvent;
+isPingEvent(event): event is PingEvent;
 ```
 
 ## Development

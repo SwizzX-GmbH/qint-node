@@ -16,7 +16,7 @@ or CI.
 
 - Node.js 18+ and npm 10+.
 - Membership in the `@qint` npm scope with publish rights.
-- A clean checkout of the tag you intend to publish (e.g. `v0.1.0`).
+- A clean checkout of the tag you intend to publish (e.g. `v0.2.0`).
 
 ## One-time setup
 
@@ -53,7 +53,7 @@ npm pack --dry-run
 npm publish
 ```
 
-`npm publish` reads `version` from `package.json` (currently `0.1.0`). The
+`npm publish` reads `version` from `package.json` (currently `0.2.0`). The
 `files` allowlist ships only `dist/`, `README.md`, and `LICENSE`.
 
 ## Releasing a new version

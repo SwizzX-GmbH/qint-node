@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { QintClient, QintApiError, DEFAULT_BASE_URL, CURRENCIES, type FetchLike } from "../src/index.js";
+import {
+  QintClient,
+  QintApiError,
+  DEFAULT_BASE_URL,
+  CURRENCIES,
+  SETTLEMENT_ASSETS,
+  ERROR_CODES,
+  type FetchLike,
+} from "../src/index.js";
 import type { Intent } from "../src/index.js";
 
 /** A recorded request, for asserting request shaping. */
@@ -319,5 +327,117 @@ describe("construction", () => {
   it("requires an apiKey", () => {
     // @ts-expect-error intentionally missing apiKey
     expect(() => new QintClient({})).toThrow(/apiKey/);
+  });
+});
+
+describe("settlement asset on intents", () => {
+  it("parses creditAsset, reversed, underpaid and null fee/net amounts", async () => {
+    const body = {
+      ...sampleIntent,
+      status: "settled",
+      reversed: false,
+      underpaid: false,
+      feeAmount: 0.5,
+      netAmount: 99.5,
+      creditUsdt: 111.67,
+      creditRate: 0.891,
+      creditAsset: "USDC",
+    };
+    const { fetch } = mockFetch({ body });
+    const intent = await new QintClient({ apiKey: "k", fetch }).getIntent("pi_123");
+    expect(intent.creditAsset).toBe("USDC");
+    expect(intent.creditUsdt).toBe(111.67);
+    expect(intent.reversed).toBe(false);
+    expect(intent.underpaid).toBe(false);
+
+    const pending = { ...sampleIntent, feeAmount: null, netAmount: null, creditAsset: null };
+    const second = await new QintClient({ apiKey: "k", fetch: mockFetch({ body: pending }).fetch }).getIntent("pi_123");
+    expect(second.feeAmount).toBeNull();
+    expect(second.netAmount).toBeNull();
+    expect(second.creditAsset).toBeNull();
+  });
+
+  it("passes an unknown settlement asset and unknown fields through", async () => {
+    const { fetch } = mockFetch({ body: { ...sampleIntent, creditAsset: "EURC", somethingNew: 1 } });
+    const intent = await new QintClient({ apiKey: "k", fetch }).getIntent("pi_123");
+    expect(intent.creditAsset as string).toBe("EURC");
+    expect((intent as unknown as Record<string, unknown>).somethingNew).toBe(1);
+  });
+
+  it("exposes the known settlement assets", () => {
+    expect(SETTLEMENT_ASSETS).toEqual(["USDT", "USDC"]);
+  });
+});
+
+describe("QintClient.listCurrencies", () => {
+  const currencies = {
+    currencies: [
+      { code: "CHF", enabled: true },
+      { code: "EUR", enabled: true },
+      { code: "USD", enabled: true },
+      { code: "GBP", enabled: false },
+    ],
+  };
+
+  it("GETs /public/currencies without sending the API key", async () => {
+    const { fetch, calls } = mockFetch({ body: currencies });
+    const list = await new QintClient({ apiKey: "qk_live_test", fetch }).listCurrencies();
+    expect(list).toEqual(currencies);
+    expect(calls[0]!.method).toBe("GET");
+    expect(calls[0]!.url).toBe(`${DEFAULT_BASE_URL}/public/currencies`);
+    expect(calls[0]!.headers?.Authorization).toBeUndefined();
+  });
+
+  it("enabledCurrencies returns only enabled codes, in order", async () => {
+    const { fetch } = mockFetch({ body: currencies });
+    expect(await new QintClient({ apiKey: "k", fetch }).enabledCurrencies()).toEqual(["CHF", "EUR", "USD"]);
+  });
+
+  it("tolerates unknown currency codes and fields", async () => {
+    const { fetch } = mockFetch({
+      body: { currencies: [{ code: "JPY", enabled: true, label: "Yen" }], extra: true },
+    });
+    const client = new QintClient({ apiKey: "k", fetch });
+    expect(await client.enabledCurrencies()).toEqual(["JPY"]);
+  });
+});
+
+describe("disabled currency", () => {
+  it("surfaces the 400 with its detail and no code", async () => {
+    const detail = "GBP is currently disabled on Qint. currency must be one of: CHF, EUR, USD.";
+    const { fetch } = mockFetch({
+      status: 400,
+      body: {
+        type: "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+        title: "An error occurred while processing your request.",
+        status: 400,
+        detail,
+        traceId: "00-abc-def-00",
+      },
+      contentType: "application/problem+json",
+    });
+    const client = new QintClient({ apiKey: "k", fetch });
+    const err = await client
+      .createIntent({ amount: 50, currency: "GBP", idempotencyKey: "o-1" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QintApiError);
+    const e = err as QintApiError;
+    expect(e.status).toBe(400);
+    expect(e.detail).toBe(detail);
+    expect(e.message).toBe(detail);
+    expect(e.code).toBeUndefined();
+    expect(e.traceId).toBe("00-abc-def-00");
+  });
+});
+
+describe("error codes", () => {
+  it("knows settlement_asset_mismatch", async () => {
+    expect(ERROR_CODES.settlementAssetMismatch).toBe("settlement_asset_mismatch");
+    const { fetch } = mockFetch({
+      status: 400,
+      body: { status: 400, title: "Wrong payout asset", code: "settlement_asset_mismatch", detail: "x" },
+    });
+    const err = (await new QintClient({ apiKey: "k", fetch }).getIntent("pi_1").catch((e) => e)) as QintApiError;
+    expect(err.code).toBe(ERROR_CODES.settlementAssetMismatch);
   });
 });
